@@ -2,11 +2,13 @@ pipeline {
     agent any
 
     environment {
-        ACR_NAME = "zeeshan"
-        ACR_LOGIN_SERVER = "zeeshan.azurecr.io"
+        ACR_NAME = "zeeshanagency"
+        ACR_LOGIN_SERVER = "zeeshanagency.azurecr.io"
         IMAGE_NAME = "app"
-        IMAGE_TAG = "latest"
+        IMAGE_TAG = "build-${BUILD_NUMBER}"       // Unique tag per build
         GITHUB_REPO = "https://github.com/zeeshaan02/azure.git"
+        WEBAPP_NAME = "zeeshan-webapp"           // Replace with your Web App name
+        RESOURCE_GROUP = "zeeshan-rg"            // Replace with your Resource Group
     }
 
     stages {
@@ -18,9 +20,7 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh """
-                docker build -t ${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${IMAGE_TAG} .
-                """
+                sh "docker build -t ${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${IMAGE_TAG} ."
             }
         }
 
@@ -37,14 +37,33 @@ pipeline {
         stage('Push Docker Image to ACR') {
             steps {
                 sh "docker push ${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${IMAGE_TAG}"
+                sh "docker tag ${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${IMAGE_TAG} ${ACR_LOGIN_SERVER}/${IMAGE_NAME}:latest"
+                sh "docker push ${ACR_LOGIN_SERVER}/${IMAGE_NAME}:latest"
             }
         }
 
-        stage('Trigger App Service Pull (Optional)') {
+        stage('Deploy to Azure Web App') {
             steps {
-                echo "If App Service is set to auto-pull latest image from ACR, no CLI needed."
-                echo "Otherwise, you can use Azure CLI or leave manual UI pull."
+                withCredentials([usernamePassword(credentialsId: 'acr-cred',
+                        usernameVariable: 'ACR_USER',
+                        passwordVariable: 'ACR_PASS')]) {
+                    sh """
+                    az webapp config container set \
+                        --name ${WEBAPP_NAME} \
+                        --resource-group ${RESOURCE_GROUP} \
+                        --docker-custom-image-name ${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${IMAGE_TAG} \
+                        --docker-registry-server-url https://${ACR_LOGIN_SERVER} \
+                        --docker-registry-server-user $ACR_USER \
+                        --docker-registry-server-password $ACR_PASS
+                    """
+                    sh "az webapp restart --name ${WEBAPP_NAME} --resource-group ${RESOURCE_GROUP}"
+                }
             }
         }
+    }
+
+    environment {
+        ACR_USER = credentials('acr-cred').username
+        ACR_PASS = credentials('acr-cred').password
     }
 }
